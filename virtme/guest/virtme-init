@@ -475,10 +475,18 @@ if [[ -n ${virtme_graphics} ]]; then
     fi
     # Drop to console if the graphical app failed.
 fi
-if [[ -n ${virtme_user} ]]; then
-    setsid bash -c "su - ${virtme_user}" 0<> "/dev/$consdev" 1>&0 2>&0
-else
+
+if [[ -z $virtme_systemd ]]; then
+    if [[ -n ${virtme_user} ]]; then
+        setsid bash -c "su - ${virtme_user}" 0<> "/dev/$consdev" 1>&0 2>&0
+    fi
     setsid bash 0<> "/dev/$consdev" 1>&0 2>&0
+else
+    mkdir -p /usr/lib/systemd/system-generators
+    mount --bind /dev/null /usr/lib/systemd/system-generators/systemd-fstab-generator 2>/dev/null
+    mount --bind /dev/null /usr/lib/systemd/system-generators/systemd-cryptsetup-generator 2>/dev/null
+    mount --bind /dev/null /etc/systemd/system/systemd-journald.service 2>/dev/null
+    SYSTEMD_UNIT_PATH="$(dirname -- "$0")": exec /sbin/init 2
 fi
 
 # Exit when the main shell session terminates

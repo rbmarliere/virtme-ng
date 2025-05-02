@@ -1,0 +1,7 @@
+[Service]
+ExecStart=-/sbin/agetty -o '-p -f -- \\u' --noclear --autologin root %I ${TERM}
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/%I
+TTYReset=yes
+TTYVHangup=yes
