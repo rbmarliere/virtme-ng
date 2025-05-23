@@ -606,11 +606,11 @@ Troubleshooting
    command line.
 
  - Systemd support (`--systemd`) is still experimental, be aware that you might
-   also need `--user root`, or if you're using your own / as ROOTFS, you need
+   also need `--user root`, or if you're using your own `/` as ROOTFS, you need
    to run vng itself as root. If something does not work for you, you might
    need to mask some services. You can see the ones that are masked by default
-   in the `cfg/virtme-ng.conf` file, which can be customized (refer to the
-   "Default options" section).
+   in the CONF_DEFAULT definition, which can be customized via configuration file
+   (refer to the "Default options" section).
 
  - Running virtme-ng instances inside docker: in case of failures/issues,
    especially with stdin/stdout/stderr redirections, make sure that you have
