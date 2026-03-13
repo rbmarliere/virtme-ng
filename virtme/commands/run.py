@@ -1351,10 +1351,7 @@ def ssh_client(args):
 
 
 def ssh_server(args, arch, qemuargs, kernelargs):
-    # Check if we need to generate the SSH host keys for the guest.
-    SSH_ETC_SSH_DIR = SSH_DIR.joinpath("etc", "ssh")
-    SSH_ETC_SSH_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
-    subprocess.check_call(["ssh-keygen", "-A", "-f", f"{SSH_DIR}"])
+    SSH_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     # Follow --user when specified for SSH logins and otherwise default
     # to the host username.
@@ -1364,6 +1361,25 @@ def ssh_server(args, arch, qemuargs, kernelargs):
     if not identity_file.exists() or not identity_file.with_suffix(".pub").exists():
         subprocess.check_call(
             ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", f"{identity_file}"]
+        )
+    legacy_identity_file = SSH_DIR.joinpath("id_virtme_rsa")
+    if (
+        not legacy_identity_file.exists()
+        or not legacy_identity_file.with_suffix(".pub").exists()
+    ):
+        subprocess.check_call(
+            [
+                "ssh-keygen",
+                "-q",
+                "-t",
+                "rsa",
+                "-b",
+                "2048",
+                "-N",
+                "",
+                "-f",
+                f"{legacy_identity_file}",
+            ]
         )
 
     if args.root == "/":
@@ -1421,7 +1437,10 @@ def ssh_server(args, arch, qemuargs, kernelargs):
     CheckHostIP no
     User {username}
     IdentityFile {identity_file}
+    IdentityFile {legacy_identity_file}
     IdentitiesOnly yes
+    HostKeyAlgorithms +ssh-rsa
+    PubkeyAcceptedKeyTypes +ssh-rsa
 
     # Disable all kinds of host identity checks, since these addresses are generally ephemeral.
     StrictHostKeyChecking no
