@@ -9,6 +9,12 @@ MODALIASES = [
     # These are most likely portable across all architectures.
     "fs-9p",
     "fs-virtiofs",
+    # Older kernels (e.g. 3.x) don't declare the "fs-*" module aliases, so
+    # also request the filesystem modules by their bare name to make sure
+    # 9p.ko / virtiofs.ko end up in the initramfs. Missing modules (like
+    # virtiofs on a pre-5.4 kernel) are simply ignored.
+    "9p",
+    "virtiofs",
     "virtio:d00000009v00001AF4",  # 9pnet_virtio
     "virtio:d00000003v00001AF4",  # virtio_console
     # These are required by the microvm architecture.
