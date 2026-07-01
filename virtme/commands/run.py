@@ -1817,7 +1817,15 @@ def do_it() -> int:
             )
         else:
             initsh.append(f"exec /run/virtme/guesttools/{virtme_init_cmd}")
-        initcmds = ["init=/bin/sh", "--", "-c", "; ".join(initsh)]
+        # Write the init commands to a script and exec it directly instead of
+        # relying on `/bin/sh -c "..."`. Old guest shells (e.g. bash 3.2)
+        # mishandle the `-- -c` argument passing done by the kernel, so pass a
+        # plain script path as init's only argument.
+        guest_initsh = create_guest_init_script(args.root, "; ".join(initsh))
+        if guest_initsh is not None:
+            initcmds = ["init=/bin/sh", guest_initsh]
+        else:
+            initcmds = ["init=/bin/sh", "--", "-c", "; ".join(initsh)]
 
     # Arrange for modules to end up in the right place
     if kernel.moddir is not None:
