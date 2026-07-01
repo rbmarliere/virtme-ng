@@ -592,6 +592,54 @@ def get_kernel_version(orig_path, img_name: str | None = None):
     return None
 
 
+def ensure_usr_lib_modules(root_dir, verbose=False):
+    # Modern kmod (>= 29) resolves modules relative to <root>/usr/lib/modules
+    # and no longer falls back to <root>/lib/modules. Non-usr-merged guests
+    # (e.g. old distros) only ship /lib/modules, so create a symlink at
+    # /usr/lib/modules pointing back to it. Only do this when /lib/modules is a
+    # real directory and /usr/lib/modules is missing, to avoid touching
+    # usr-merged layouts.
+    if root_dir in (None, "/"):
+        return
+    lib_modules = os.path.join(root_dir, "lib", "modules")
+    usr_lib_modules = os.path.join(root_dir, "usr", "lib", "modules")
+    if not os.path.isdir(lib_modules) or os.path.islink(lib_modules):
+        return
+    if os.path.exists(usr_lib_modules) or os.path.islink(usr_lib_modules):
+        return
+    try:
+        os.makedirs(os.path.dirname(usr_lib_modules), exist_ok=True)
+        os.symlink("../../lib/modules", usr_lib_modules)
+        if verbose:
+            sys.stderr.write(
+                f"virtme: created {usr_lib_modules} -> ../../lib/modules "
+                "for module lookup\n"
+            )
+    except OSError as exc:
+        if verbose:
+            sys.stderr.write(
+                f"virtme: unable to create {usr_lib_modules} symlink: {exc}\n"
+            )
+
+
+def _modules_dep_is_usable(mod_file):
+    # Old guests ship a modules.dep that uses absolute module paths, which
+    # modern kmod cannot parse (it expects paths relative to the module
+    # directory). Treat such a file as unusable so it gets regenerated.
+    try:
+        with open(mod_file, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # Format is "<module>: [deps...]"; check the first token.
+                return not line.split(":", 1)[0].startswith("/")
+    except OSError:
+        return False
+    # Empty file: let depmod regenerate it.
+    return False
+
+
 def find_kernel_and_mods(arch, args) -> Kernel:
     kernel = Kernel()
     kernel.config = None
@@ -664,20 +712,31 @@ def find_kernel_and_mods(arch, args) -> Kernel:
             if root_dir == "/" or args.root != "/":
                 kernel.use_root_mods = True
             kernel.moddir = f"{root_dir}/lib/modules/{kver}"
+            usr_moddir = f"{root_dir}/usr/lib/modules/{kver}"
+            if not os.path.exists(kernel.moddir) and os.path.exists(usr_moddir):
+                # usr-merged rootfs: modules only live under /usr/lib/modules.
+                kernel.moddir = usr_moddir
             if not os.path.exists(kernel.moddir):
                 kernel.modfiles = []
                 kernel.moddir = None
             else:
+                # Modern kmod (>= 29) only looks for modules under
+                # <root>/usr/lib/modules. Old, non-usr-merged guests keep them
+                # in <root>/lib/modules, so create a compatibility symlink to
+                # let the host's modprobe/depmod find the guest modules.
+                ensure_usr_lib_modules(root_dir, args.verbose)
+
                 mod_file = os.path.join(kernel.moddir, "modules.dep")
-                if not os.path.exists(mod_file):
+                if not os.path.exists(mod_file) or not _modules_dep_is_usable(mod_file):
                     depmod = find_binary_or_raise(["depmod"])
 
                     if args.verbose:
                         sys.stderr.write("virtme: generating modules.dep file\n")
 
                     # Try to refresh modules directory. Some packages (e.g., debs)
-                    # don't ship all the required modules information, so we
-                    # need to refresh the modules directory using depmod.
+                    # don't ship all the required modules information, and old
+                    # guests ship a stale modules.dep with absolute paths that
+                    # modern kmod cannot parse, so refresh it using depmod.
                     subprocess.call(
                         [depmod, "-a", "-b", root_dir, kver],
                         stderr=subprocess.DEVNULL,
