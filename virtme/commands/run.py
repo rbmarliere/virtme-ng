@@ -1500,6 +1500,7 @@ def ssh_server(args, arch, qemuargs, kernelargs):
     IdentitiesOnly yes
     HostKeyAlgorithms +ssh-rsa
     PubkeyAcceptedKeyTypes +ssh-rsa
+    Ciphers ^aes128-ctr
 
     # Disable all kinds of host identity checks, since these addresses are generally ephemeral.
     StrictHostKeyChecking no
