@@ -134,6 +134,15 @@ def make_parser() -> "VirtmeArgumentParser":
         "here, e.g. /dev/vda3 or PARTUUID=<uuid> for partitioned images.",
     )
     g.add_argument(
+        "--root-fstype",
+        action="store",
+        default=None,
+        metavar="FSTYPE",
+        help="Filesystem type of --root-dev.  Only needed when an initramfs "
+        "has to mount the root disk and blkid cannot tell, e.g. for "
+        "partitioned images.",
+    )
+    g.add_argument(
         "--systemd",
         action="store_true",
         help="Execute systemd as init (EXPERIMENTAL)",
@@ -1261,6 +1270,28 @@ def detect_disk_format(path: str, verbose: bool = False) -> str:
         return "raw"
 
 
+def detect_disk_fstype(path: str, verbose: bool = False) -> str | None:
+    """Return the filesystem type of PATH, or None if it cannot be determined.
+
+    blkid only sees the start of the image, so a partitioned image resolves to
+    its partition table rather than to a filesystem.  Callers must be prepared
+    to ask the user via --root-fstype.
+    """
+    blkid = which("blkid", path=os.defpath + os.pathsep + "/sbin:/usr/sbin")
+    if blkid is None:
+        if verbose:
+            sys.stderr.write("virtme: blkid not found, cannot detect the root fstype\n")
+        return None
+    try:
+        out = subprocess.check_output(
+            [blkid, "-o", "value", "-s", "TYPE", "--", path],
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return out.decode(errors="replace").strip() or None
+
+
 def export_root_disk(qemu, arch, qemuargs, args) -> None:
     """Attach the --root-disk image as the first virtio-blk device."""
     fmt = detect_disk_format(args.root_disk, verbose=args.verbose)
@@ -1554,8 +1585,16 @@ def do_it() -> int:
             ssh_client(args)
         sys.exit(0)
 
-    if args.root_disk is not None and not os.path.exists(args.root_disk):
-        arg_fail(f"{args.root_disk} does not exist")
+    root_fstype = args.root_fstype
+    if args.root_disk is not None:
+        if not os.path.exists(args.root_disk):
+            arg_fail(f"{args.root_disk} does not exist")
+        if root_fstype is None:
+            root_fstype = detect_disk_fstype(args.root_disk, verbose=args.verbose)
+            if args.verbose and root_fstype is not None:
+                sys.stderr.write(f"virtme: detected root fstype: {root_fstype}\n")
+    elif args.root_fstype is not None:
+        arg_fail("--root-fstype requires --root-disk")
 
     guest_cache_dir = None
     serial_getty_dir = None
@@ -1589,19 +1628,37 @@ def do_it() -> int:
     if len(args.overlay_rwdir) > 0:
         virtmods.MODALIASES.append("overlay")
 
+    if args.root_disk is not None:
+        # Nothing else pulls these in, and they are needed before the root
+        # filesystem is available.  Modules already built into the kernel are
+        # silently dropped by the resolver.
+        virtmods.MODALIASES.append("virtio_blk")
+        if root_fstype is not None:
+            virtmods.MODALIASES.append(f"fs-{root_fstype}")
+
     kernel = find_kernel_and_mods(arch, args)
     config.modfiles = kernel.modfiles
     if config.modfiles:
         need_initramfs = True
 
     if args.root_disk is not None and need_initramfs:
-        # An initramfs takes over the root mount from the kernel, and this one
-        # only knows how to mount a host export.
-        arg_fail(
-            "--root-disk needs a kernel that can reach the root device "
-            "without an initramfs: build CONFIG_VIRTIO_BLK, the filesystem of "
-            "the image and the virtio transports into it"
-        )
+        # An initramfs takes over the root mount from the kernel, so it has to
+        # do it itself.  That needs a real device node and an explicit
+        # filesystem type: root= tokens are resolved by the kernel, and /proc
+        # is not mounted at that point.
+        if not args.root_dev.startswith("/dev/"):
+            arg_fail(
+                f"--root-dev {args.root_dev} needs a kernel that can reach the "
+                "root device on its own (CONFIG_VIRTIO_BLK and the root "
+                "filesystem built in), use a /dev/ path otherwise"
+            )
+        if root_fstype is None:
+            arg_fail(
+                f"could not detect the filesystem of {args.root_dev} in "
+                f"{args.root_disk}, please specify it with --root-fstype"
+            )
+        config.root_disk_dev = args.root_dev
+        config.root_fstype = root_fstype
 
     if args.gdb is not None:
         if kernel.version:
@@ -2493,12 +2550,10 @@ def do_it() -> int:
             # exactly like it would on real hardware.  Without rootfstype= it
             # tries every filesystem it has, and it lists the partitions it
             # can see if none of them works out.
-            kernelargs.extend(
-                [
-                    f"root={qemu.quote_optarg(args.root_dev)}",
-                    "rootwait",
-                ]
-            )
+            kernelargs.append(f"root={qemu.quote_optarg(args.root_dev)}")
+            if root_fstype is not None:
+                kernelargs.append(f"rootfstype={root_fstype}")
+            kernelargs.append("rootwait")
         elif use_virtiofs:
             kernelargs.extend(
                 [

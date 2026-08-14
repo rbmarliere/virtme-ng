@@ -422,15 +422,19 @@ Examples
 
    The image is attached read-only unless `--rw` is given.
 
-   The kernel has to be able to reach the disk on its own, so it needs
-   `CONFIG_VIRTIO_BLK` and the filesystem of the image built in, along with
-   the virtio transports virtme-ng exports the guest tools over. Filesystems
-   are not part of the generic virtme-ng kernel configuration, so pick the one
+   It is best to give the kernel everything it needs to reach the disk on its
+   own, i.e. `CONFIG_VIRTIO_BLK` and the filesystem of the image built in,
+   which keeps the initramfs out of the boot entirely. Filesystems are not
+   part of the generic virtme-ng kernel configuration, so pick the one
    matching your image:
    ```console
    $ vng --kconfig --configitem CONFIG_EXT4_FS=y
    $ vng --build
    ```
+
+   Kernels shipping those as modules, such as distribution kernels, work too:
+   virtme-ng then mounts the disk from its initramfs instead, which needs
+   `--root-dev` to be a plain device path.
 
  - Boot a partitioned disk image, such as a cloud image, by naming the
    partition holding the root filesystem:
@@ -439,7 +443,12 @@ Examples
    ```
 
    `--root-dev` accepts anything the kernel accepts in `root=`, so
-   `PARTUUID=<uuid>` and `PARTLABEL=<label>` work as well.
+   `PARTUUID=<uuid>` and `PARTLABEL=<label>` work as well when the kernel
+   mounts the disk itself.
+
+   virtme-ng detects the filesystem of the image with `blkid`. That only works
+   for images that are a bare filesystem, so a partitioned image booted by a
+   kernel with modular drivers may need `--root-fstype`.
 
  - Run the current kernel creating a 1GB NUMA node with CPUs 0,1,3 assigned
    and a 3GB NUMA node with CPUs 2,4,5,6,7 assigned:

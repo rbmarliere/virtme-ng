@@ -306,6 +306,13 @@ virtme-ng is based on virtme, written by Andy Lutomirski <luto@kernel.org>.
     )
 
     parser.add_argument(
+        "--root-fstype",
+        action="store",
+        metavar="FSTYPE",
+        help="Filesystem type of --root-dev (autodetected when not specified)",
+    )
+
+    parser.add_argument(
         "--root-release",
         action="store",
         help="Use a target Ubuntu release to create a new chroot (used with --root)",
@@ -1034,10 +1041,14 @@ class KernelSource:
             if not os.path.exists(args.root_disk):
                 arg_fail(f"{args.root_disk} does not exist", show_usage=False)
             opts.append(f"--root-disk {shlex.quote(args.root_disk)}")
-        elif args.root_dev is not None:
-            arg_fail("--root-dev requires --root-disk", show_usage=False)
+        elif args.root_dev is not None or args.root_fstype is not None:
+            arg_fail(
+                "--root-dev and --root-fstype require --root-disk", show_usage=False
+            )
         if args.root_dev is not None:
             opts.append(f"--root-dev {shlex.quote(args.root_dev)}")
+        if args.root_fstype is not None:
+            opts.append(f"--root-fstype {shlex.quote(args.root_fstype)}")
         self.virtme_param["root_disk"] = " ".join(opts)
 
     def _get_virtme_systemd(self, args):

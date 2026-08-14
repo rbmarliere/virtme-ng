@@ -107,13 +107,9 @@ def install_modules(cw, modfiles):
     cw.write_file(name=b"modules/load_all.sh", body=script.encode("ascii"), mode=0o644)
 
 
-_INIT = r"""#!/bin/sh
-
-{logfunc}
-
-source /modules/load_all.sh
-
-log 'mounting hostfs...'
+# Mount the host directory exported as the guest root, over virtiofs if the
+# guest supports it, over 9p otherwise.
+_MOUNT_HOSTFS = r"""log 'mounting hostfs...'
 
 if ! /bin/mount -n -t virtiofs -o {access} ROOTFS /newroot/ 2>/dev/null; then
   if ! /bin/mount -n -t 9p -o {access},version=9p2000.L,trans=virtio,access=any,msize=524288 /dev/root /newroot/; then
@@ -132,7 +128,33 @@ if ! mount -t proc -o nosuid,noexec,nodev proc /newroot/proc 2>/dev/null; then
 else
   umount /newroot/proc  # Don't leave garbage behind
 fi
+"""
 
+# Mount a disk image exported over virtio-blk as the guest root.  This is only
+# used when an initramfs is needed anyway (i.e. the drivers required to reach
+# the disk are modular); otherwise root= and rootwait are handed to the kernel
+# and none of this runs.
+_MOUNT_DISK = r"""log 'mounting {rootdev}...'
+
+# The initramfs has no populated /dev, and the modules loaded above may have
+# just created the block device.
+/bin/mount -n -t devtmpfs devtmpfs /dev 2>/dev/null
+
+if ! /bin/mount -n -t {rootfstype} -o {access} {rootdev} /newroot/; then
+  echo "Failed to mount {rootdev} as {rootfstype}.  We are stuck."
+  sleep 5
+  exit 1
+fi
+"""
+
+
+_INIT = r"""#!/bin/sh
+
+{logfunc}
+
+source /modules/load_all.sh
+
+{mount_root}
 # Find init
 mount -t proc none /proc
 for arg in `cat /proc/cmdline`; do
@@ -154,13 +176,30 @@ exec /bin/switch_root /newroot "$init" "$@"
 
 
 def generate_init(config) -> bytes:
+    if config.root_disk_dev is not None:
+        mount_root = _MOUNT_DISK.format(
+            access=config.access,
+            rootdev=config.root_disk_dev,
+            rootfstype=config.root_fstype,
+        )
+    else:
+        mount_root = _MOUNT_HOSTFS.format(access=config.access)
+
     out = io.StringIO()
-    out.write(_INIT.format(logfunc=_LOGFUNC, access=config.access))
+    out.write(_INIT.format(logfunc=_LOGFUNC, mount_root=mount_root))
     return out.getvalue().encode("utf-8")
 
 
 class Config:
-    __slots__ = ["modfiles", "virtme_data", "virtme_init_path", "busybox", "access"]
+    __slots__ = [
+        "modfiles",
+        "virtme_data",
+        "virtme_init_path",
+        "busybox",
+        "access",
+        "root_disk_dev",
+        "root_fstype",
+    ]
 
     def __init__(self):
         self.modfiles: list[str] = []
@@ -168,6 +207,10 @@ class Config:
         self.virtme_init_path: str | None = None
         self.busybox: str | None = None
         self.access = "ro"
+        # Guest device holding the root filesystem, when booting from a disk
+        # image, and the filesystem type to mount it with.
+        self.root_disk_dev: str | None = None
+        self.root_fstype: str | None = None
 
 
 def mkinitramfs(out, config) -> None:
