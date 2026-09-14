@@ -1952,11 +1952,14 @@ def do_it() -> int:
                 "/run/virtme/busybox", os.path.basename(host_busybox)
             )
         if args.systemd:
-            initsh.extend(
-                [
-                    "SYSTEMD_UNIT_PATH=/run/virtme/cache: exec /sbin/init",
-                ]
-            )
+            if module_link_path is not None:
+                initsh.extend(
+                    [
+                        "mount -n -t tmpfs none /lib/modules",
+                        f"ln -s {module_link_path} /lib/modules/$(uname -r)",
+                    ]
+                )
+            initsh.append("SYSTEMD_UNIT_PATH=/run/virtme/cache: exec /sbin/init")
         else:
             initsh.append(f"exec /run/virtme/guesttools/{virtme_init_cmd}")
         initcmds = ["init=/bin/sh", "--", "-c", "; ".join(initsh)]
